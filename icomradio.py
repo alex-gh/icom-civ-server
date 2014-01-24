@@ -11,7 +11,14 @@ class IcomRadio:
                 'CW-N': [0x03, 0x02],
                 'RTTY': [0x04, 0x01],
                 'WFM':  [0x06, 0x01] }
-    
+   
+    valid_cmds = frozenset(['scan_start',
+                            'scan_stop',
+                            'set_mode',
+                            'set_freq',
+                            'set_patt',
+                            'set_agc'])    
+   
     def __init__(self, radio_addr, serial_port):
         self.radio_addr = radio_addr
         self.comp_addr = 0xE0
