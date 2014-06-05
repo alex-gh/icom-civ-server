@@ -49,42 +49,51 @@ class IcomRadio:
                 continue
             if n == len(validate):
                 if b == b'\xFD':
-                    return binascii.b2a_hex(response).decode('ascii').upper()
+                    r = binascii.b2a_hex(response).decode('ascii')
+                    if respond_with_data:
+                        return r
+                    else:
+                        return r == 'fb'
                 else:
                     response += b
             elif ord(b) == validate[n]:
                 n=n+1
         print('timed out')
-        return 'FF' 
+        return None
             
     def set_freq(self, freq):
         if not freq.isdigit() or len(freq) != 10:
-            return 'FF'
+            return ''
         payload = []
         for x in range(0,5):
             payload.insert(0, int(freq[2*x:2*x+2], 16))
-        return self.cmd([0x05], payload)
+        response = self.cmd([0x05], payload)
+        if response:
+            return freq
+        else:
+            return response
         
     def set_mem(self, memnum):
         if not memnum.isdigit() or len(memnum) != 2:
-            return 'FF'
+            return ''
         b = self.cmd([0x08])
-        if b != 'FB':
+        if b:
+            return self.cmd([0x08], [int(memnum, 16)])
+        else:
             return b
-        return self.cmd([0x08], [int(memnum, 16)])
             
     def set_vfo(self, l):
         vfo_bytes = {'A' : 0x00, 'B' : 0x01}
         if l not in vfo_bytes.keys():
-            return 'FF'
+            return ''
         r = self.cmd([0x07], [vfo_bytes[l]])
-        if r != 'FB':
+        if not r:
             return r
         mode = self.read_mode()
-        if mode == 'FA' or mode == 'FF':
+        if not mode:
             return mode
         freq = self.read_freq()
-        if freq == 'FA' or freq == 'FF':
+        if not freq:
             return freq
         return mode + ' ' + freq
         
@@ -93,13 +102,14 @@ class IcomRadio:
     
     def scan_stop(self):
         r = self.cmd([0x0E], [0x00])
-        if r != 'FB':
+        if r:
+            return self.read_freq()
+        else:
             return r
-        return self.read_freq()
         
     def set_mode(self, m):
         if m not in self.mode_bytes:
-            return 'FF'
+            return ''
         return self.cmd([0x06], self.mode_bytes[m])
     
     def read_freq(self):
@@ -140,9 +150,8 @@ class IcomRadio:
         elif a == 'OFF':
             response1 = self.cmd([0x16, 0x02], [0x00])
             response2 = self.cmd([0x11], [0x00])
-            if response1 == 'FB' and response2 == 'FB':
-                return 'FB'
-        return 'FF'
+            return response1 and response2
+        return ''
         
     def set_agc(self, a):
         if a == 'FAST':
@@ -150,6 +159,6 @@ class IcomRadio:
         elif a == 'SLOW':
             n = 0x02
         else:
-            return 'FF'
+            return ''
         return self.cmd([0x16, 0x12], [n])
 
