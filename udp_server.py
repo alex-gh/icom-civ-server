@@ -23,21 +23,29 @@ class meter_thread(threading.Thread):
         self.conn = conn
 
     def run(self):
-        while 1:
-            if not client_present:
-                return
+        global client_present
+        failures = 0
+        while client_present:
             radio_lock.acquire()
             reading = radio.read_meter()
-            tosend = json.dumps({"cmd" : "read_meter", "response" : reading}) + '\n'
             radio_lock.release()
+            tosend = json.dumps({"cmd" : "read_meter", "response" : reading}) + '\n'
             socket_lock.acquire()
             try:
                 self.conn.send(bytes(tosend, 'ascii'))
+            except BrokenPipeError:
+                socket_lock.release()
+                client_present = False
             except:
-                pass
-            socket_lock.release()
-            time.sleep(0.1)
-
+                socket_lock.release()
+                if failures < 5:
+                    failures += 1
+                else:
+                    client_present = False
+            else:
+                socket_lock.release()
+                failures = 0
+                time.sleep(0.1)
 
 class audio_thread(threading.Thread):
     def __init__(self, remote_ip):
@@ -58,11 +66,14 @@ class audio_thread(threading.Thread):
         print('set up audio device file') 
     
     def run(self):
-        while True:
-            if not client_present:
-                return
+        while client_present:
             in_samples = self.dsp.read(1024)
-            self.sock.sendto(in_samples, (self.remote_ip, AUDIO_PORT))
+            try:
+                self.sock.sendto(in_samples, (self.remote_ip, AUDIO_PORT))
+            except:
+                pass
+        self.dsp.close()
+        self.mixer.close()
 
 
 def cmd_radio(cmd):
@@ -70,53 +81,61 @@ def cmd_radio(cmd):
         methodToCall = getattr(radio, cmd['cmd'])
         radio_lock.acquire()
         if not cmd['arg']:
-            ret = methodToCall()
+            cmd['response'] = methodToCall()
         else:
-            ret = methodToCall(cmd['arg'])
+            cmd['response']  = methodToCall(cmd['arg'])
         radio_lock.release()
-        return json.dumps({'cmd': cmd['cmd'], 'response': ret, 'arg': cmd['arg']})
     else:
-        cmd['response'] = False;
-        return cmd;
+        cmd['response'] = False
+        cmd['error'] = 'Invalid command'
+    return cmd
 
 def connection(conn):
     global client_present
     client_present = True
-    closed = False
 
-    remote_ip = ''
-    c = conn.recv(1).decode('ascii')
-    while c != '\n':
-        remote_ip += c
-        c = conn.recv(1).decode('ascii')
+    sock_file = conn.makefile()
+    
+    try:
+        remote_ip = sock_file.readline()
+    except:
+        client_present = False
+        return
 
-    print('remote_ip:', remote_ip)
+    print('remote ip:', remote_ip)
 
-    meter_thread(conn, remote_ip).start()
-    audio_thread(remote_ip).start()
+    met_thd = meter_thread(conn, remote_ip)
+    met_thd.start()
 
-    while 1:
-        rcv = ''
-        while len(rcv.split('\n')) < 2:
-            chunk = conn.recv(1024)
-            if not chunk:
-                closed = True
-                break
-            rcv += chunk.decode('ascii')
+    audio_thd = audio_thread(remote_ip)
+    audio_thd.start()
 
-        if not closed:
+    conn.settimeout(0.5)
+    rcv = ''
+    while client_present:
+        while client_present and len(rcv.split('\n')) < 2:
+            try:
+                chunk = conn.recv(1024)
+                rcv += chunk.decode('ascii')
+            except:
+                pass
+
+        if client_present:
             token = rcv.split('\n')
-            rcv = rcv[len(token[0]):]
+            rcv = rcv[(len(token[0])+1):]
             cmd = json.loads(token[0])
-            print('recieved:', cmd)
-            reply = cmd_radio(cmd)
+            print('recieved:', token[0])
+            reply = json.dumps(cmd_radio(cmd))
             socket_lock.acquire()
-            conn.send(bytes(reply + '\n', 'ascii'))
+            try:
+                conn.send(bytes(reply + '\n', 'ascii'))
+            except:
+                pass
             socket_lock.release()
-        else:
-            print('client closing\n')
-            client_present = False
-            return
+    # Cleanup
+    met_thd.join()
+    audio_thd.join()
+    print('client gone\n')
 
 if __name__ == '__main__':
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
