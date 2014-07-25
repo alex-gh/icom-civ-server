@@ -27,9 +27,10 @@ class meter_thread(threading.Thread):
         failures = 0
         while client_present:
             radio_lock.acquire()
-            reading = radio.read_meter()
+            response = radio.read_meter()
             radio_lock.release()
-            tosend = json.dumps({"cmd" : "read_meter", "response" : reading}) + '\n'
+            response['cmd'] = 'read_meter'
+            tosend = json.dumps(response) + '\n'
             socket_lock.acquire()
             try:
                 self.conn.send(bytes(tosend, 'ascii'))
@@ -77,17 +78,18 @@ class audio_thread(threading.Thread):
 
 
 def cmd_radio(cmd):
-    if cmd['cmd'] in IcomRadio.valid_cmds:
+    if cmd['cmd'] in IcomRadio.VALID_CMDS:
         methodToCall = getattr(radio, cmd['cmd'])
         radio_lock.acquire()
         if not cmd['arg']:
-            cmd['response'] = methodToCall()
+            response = methodToCall()
         else:
-            cmd['response']  = methodToCall(cmd['arg'])
+            response  = methodToCall(cmd['arg'])
+        cmd = dict(list(cmd.items()) + list(response.items()))
         radio_lock.release()
     else:
         cmd['response'] = False
-        cmd['error'] = 'Invalid command'
+        cmd['error'] = 'Unknown command'
     return cmd
 
 def connection(conn):
@@ -125,7 +127,9 @@ def connection(conn):
             rcv = rcv[(len(token[0])+1):]
             cmd = json.loads(token[0])
             print('recieved:', token[0])
-            reply = json.dumps(cmd_radio(cmd))
+            response = cmd_radio(cmd)
+            print(response)
+            reply = json.dumps(response)
             socket_lock.acquire()
             try:
                 conn.send(bytes(reply + '\n', 'ascii'))

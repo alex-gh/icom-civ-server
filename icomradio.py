@@ -3,7 +3,9 @@ import time
 import binascii
 
 class IcomRadio:
-    mode_bytes = {'FM':  [0x05, 0x01],
+    BAD_INPUT = { 'success': False, 'error': 'Bad input' }
+
+    MODE_BYTES = { 'FM':  [0x05, 0x01],
                 'USB':  [0x01, 0x01],
                 'LSB':  [0x00, 0x01],
                 'AM':   [0x02, 0x01],
@@ -12,7 +14,7 @@ class IcomRadio:
                 'RTTY': [0x04, 0x01],
                 'WFM':  [0x06, 0x01] }
    
-    valid_cmds = frozenset(['scan_start',
+    VALID_CMDS = frozenset(['scan_start',
                             'scan_stop',
                             'set_mode',
                             'set_freq',
@@ -51,74 +53,78 @@ class IcomRadio:
                 if b == b'\xFD':
                     r = binascii.b2a_hex(response).decode('ascii')
                     if respond_with_data:
-                        return r
+                        return {'success': True, 'data': r}
                     else:
-                        return r == 'fb'
+                        if r == 'fb':
+                            return { 'success': True }
+                        else:
+                            return { 'success': False, 'error': 'CI-V error' }
                 else:
                     response += b
             elif ord(b) == validate[n]:
                 n=n+1
         print('timed out')
-        return None
+        return { 'success': False, 'error': 'Radio did not respond' }
             
     def set_freq(self, freq):
         if not freq.isdigit() or len(freq) != 10:
-            return ''
+            return IcomRadio.BAD_INPUT
         payload = []
         for x in range(0,5):
             payload.insert(0, int(freq[2*x:2*x+2], 16))
         response = self.cmd([0x05], payload)
-        if response:
-            return freq
+        if response['success']:
+            return { 'success': True, 'data': freq }
         else:
             return response
         
     def set_mem(self, memnum):
         if not memnum.isdigit() or len(memnum) != 2:
-            return ''
+            return IcomRadio.BAD_INPUT
         b = self.cmd([0x08])
-        if b:
+        if b['success']:
             return self.cmd([0x08], [int(memnum, 16)])
         else:
             return b
             
     def set_vfo(self, l):
-        vfo_bytes = {'A' : 0x00, 'B' : 0x01}
+        vfo_bytes = { 'A' : 0x00, 'B' : 0x01 }
         if l not in vfo_bytes.keys():
-            return ''
+            return IcomRadio.BAD_INPUT
         r = self.cmd([0x07], [vfo_bytes[l]])
-        if not r:
+        if not r['success']:
             return r
         mode = self.read_mode()
-        if not mode:
+        if not mode['success']:
             return mode
         freq = self.read_freq()
-        if not freq:
+        if not freq['success']:
             return freq
-        return mode + ' ' + freq
+        return { 'success': True, 'data': mode + ' ' + freq['data'] }
         
     def scan_start(self):
         return self.cmd([0x0E], [0x01])
     
     def scan_stop(self):
         r = self.cmd([0x0E], [0x00])
-        if r:
+        if r['success']:
             return self.read_freq()
         else:
             return r
         
     def set_mode(self, m):
-        if m not in self.mode_bytes:
-            return ''
-        return self.cmd([0x06], self.mode_bytes[m])
+        if m not in IcomRadio.MODE_BYTES:
+            return IcomRadio.BAD_INPUT
+        return self.cmd([0x06], self.MODE_BYTES[m])
     
     def read_freq(self):
         response = self.cmd([0x03], respond_with_data=True)
-        if len(response) < 10:
+        data = response['data']
+        if len(data) < 10:
             return response
-        f = response[8:10] + response[6:8] + response[4:6] 
-        f += response[2:4] + response[0:2]
-        return f
+        f = data[8:10] + data[6:8] + data[4:6] 
+        f += data[2:4] + data[0:2]
+        return { 'success': True, 'data': f}
     
     def read_mode(self):
         mode_decode = { '0001' : 'LSB',
@@ -131,10 +137,9 @@ class IcomRadio:
                         '0601' : 'WFM' }
 
         response = self.cmd([0x04], respond_with_data=True)
-        if response in mode_decode.keys():
-            return mode_decode[response]
-        else:
-            return response
+        if response['data'] in mode_decode.keys():
+            response['data'] = mode_decode[response['data']]
+        return response
     
     def read_att(self):
         return self.cmd([0x11], respond_with_data=True)
@@ -150,8 +155,8 @@ class IcomRadio:
         elif a == 'OFF':
             response1 = self.cmd([0x16, 0x02], [0x00])
             response2 = self.cmd([0x11], [0x00])
-            return response1 and response2
-        return ''
+            return { 'success': response1['success'] and response2['success'] } 
+        return IcomRadio.BAD_INPUT
         
     def set_agc(self, a):
         if a == 'FAST':
@@ -159,6 +164,6 @@ class IcomRadio:
         elif a == 'SLOW':
             n = 0x02
         else:
-            return ''
+            return IcomRadio.BAD_INPUT
         return self.cmd([0x16, 0x12], [n])
 
