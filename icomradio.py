@@ -3,7 +3,7 @@ import time
 import binascii
 
 class IcomRadio:
-    BAD_INPUT = { 'success': False, 'error': 'Bad input' }
+    BAD_INPUT = { 'success': False, 'error': 'BAD_INPUT' }
 
     MODE_BYTES = { 'FM':  [0x05, 0x01],
                 'USB':  [0x01, 0x01],
@@ -25,7 +25,7 @@ class IcomRadio:
         self.radio_addr = radio_addr
         self.comp_addr = 0xE0
         self.s = serial.Serial(port=serial_port, baudrate=19200,
-                               timeout=0, writeTimeout=0.5)
+                               timeout=1, writeTimeout=1)
         print('acquired serial port')
 
     def flush(self):
@@ -42,12 +42,14 @@ class IcomRadio:
         to_send.append(0xFD)
         self.flush()
         self.s.write(bytearray(to_send))
-        time.sleep(.020)
-        n = 0 
-        t0 = time.clock() 
-        while (time.clock() - t0) < 0.5:
+        #time.sleep(.200)
+        i = 0
+        n = 0
+        t0 = time.time() 
+        while (time.time() - t0) < 5.0:
             b = self.s.read(1)
             if len(b) != 1:
+                i += 1
                 continue
             if n == len(validate):
                 if b == b'\xFD':
@@ -58,13 +60,13 @@ class IcomRadio:
                         if r == 'fb':
                             return { 'success': True }
                         else:
-                            return { 'success': False, 'error': 'CI-V error' }
+                            return { 'success': False, 'error': 'CI-V_ERROR' }
                 else:
                     response += b
             elif ord(b) == validate[n]:
                 n=n+1
         print('timed out')
-        return { 'success': False, 'error': 'Radio did not respond' }
+        return { 'success': False, 'error': 'RADIO_NO_REPONSE' }
             
     def set_freq(self, freq):
         if not freq.isdigit() or len(freq) != 10:
@@ -100,7 +102,7 @@ class IcomRadio:
         freq = self.read_freq()
         if not freq['success']:
             return freq
-        return { 'success': True, 'data': mode + ' ' + freq['data'] }
+        return { 'success': True, 'data': mode['data'] + ' ' + freq['data'] }
         
     def scan_start(self):
         return self.cmd([0x0E], [0x01])

@@ -30,6 +30,7 @@ class meter_thread(threading.Thread):
             response = radio.read_meter()
             radio_lock.release()
             response['cmd'] = 'read_meter'
+            response['arg'] = False
             tosend = json.dumps(response) + '\n'
             socket_lock.acquire()
             try:
