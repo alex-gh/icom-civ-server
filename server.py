@@ -26,9 +26,15 @@ class RadioRequestHandler(http.server.BaseHTTPRequestHandler):
             response = radio.scan_start()
         elif cmd == 'scan_stop':
             response = radio.scan_stop()
+        elif cmd == 'read_freq':
+            response = radio.read_freq()
+        elif cmd == 'read_mode':
+            response = radio.read_mode()
         elif len(path) > 2:
             arg = path[2]
-            if cmd == 'set_freq':
+            if cmd == 'set_scan':
+                response = radio.set_scan(arg)
+            elif cmd == 'set_freq':
                 response = radio.set_freq(arg)
             elif cmd == 'set_vfo':
                 response = radio.set_vfo(arg)
