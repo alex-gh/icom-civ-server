@@ -3,7 +3,7 @@ import time
 import binascii
 
 class IcomRadio:
-    BAD_INPUT = { 'success': False, 'error': 'BAD_INPUT' }
+    BAD_INPUT = { 'success': False, 'error': 'Bad argument for cmd' }
 
     MODE_BYTES = { 'FM':  [0x05, 0x01],
                 'USB':  [0x01, 0x01],
@@ -32,23 +32,29 @@ class IcomRadio:
         self.s.flushInput()        
 
     def cmd(self, cmd_bytes, payload=[], respond_with_data=False):
-        response = bytearray()
-        validate = [self.comp_addr, self.radio_addr]
+        validate = [0xFE, 0xFE, self.comp_addr, self.radio_addr]
         if respond_with_data:
             validate.extend(cmd_bytes)
+
         to_send = [0xFE, 0xFE, self.radio_addr, self.comp_addr]
         to_send.extend(cmd_bytes)
         to_send.extend(payload)
         to_send.append(0xFD)
+
+        receiving = False
+        response = bytearray()
+        last_n_recvd = [0] * len(validate)
+
         self.flush()
         self.s.write(bytearray(to_send))
-        n = 0
+
         t0 = time.time() 
+
         while (time.time() - t0) < 1.0:
             b = self.s.read(1)
             if len(b) != 1:
                 continue
-            if n == len(validate):
+            if receiving:
                 if b == b'\xFD':
                     r = binascii.b2a_hex(response).decode('ascii')
                     if respond_with_data:
@@ -57,13 +63,17 @@ class IcomRadio:
                         if r == 'fb':
                             return { 'success': True }
                         else:
-                            return { 'success': False, 'error': 'CI-V_ERROR' }
+                            return { 'success': False, 'error': 'CI-V error: ' + r }
                 else:
                     response += b
-            elif ord(b) == validate[n]:
-                n=n+1
+            else:
+                last_n_recvd.pop(0)
+                last_n_recvd.append(ord(b))
+                if validate == last_n_recvd:
+                    receiving = True
+
         print('timed out')
-        return { 'success': False, 'error': 'RADIO_NO_REPONSE' }
+        return { 'success': False, 'error': 'Radio off or serial conn down' }
             
     def set_freq(self, freq):
         if not freq.isdigit() or len(freq) > 10:
@@ -78,14 +88,15 @@ class IcomRadio:
         return r
         
     def set_mem(self, memnum):
-        if not memnum.isdigit() or len(memnum) != 2:
+        if not memnum.isdigit() or len(memnum) > 2:
             return IcomRadio.BAD_INPUT
-        memnum = int(memnum)
+        memnum = memnum.zfill(2)
+        bcd = int(memnum[0]) << 4 | int(memnum[1])
         r = self.cmd([0x08])
         if r['success']:
-            r = self.cmd([0x08], [memnum])
+            r = self.cmd([0x08], [bcd])
             if r['success']:
-                r['data'] = memnum
+                r['data'] = int(memnum, 10)
         return r
             
     def set_vfo(self, vfo):

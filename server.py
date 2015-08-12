@@ -51,7 +51,7 @@ class RadioRequestHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(404)
             response = {'success': False, 'error': 'WrongCommand'}
         elif not response['success']:
-            self.send_response(500)
+            self.send_response(500, response.get('error', 'Unknown error'))
         else:
             self.send_response(200)
         
