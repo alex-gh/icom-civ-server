@@ -59,7 +59,7 @@ class RadioRequestHandler(http.server.BaseHTTPRequestHandler):
         print(path)
         response = None
         try:
-            cmd = path[0] if len(path) == 1 else None
+            cmd = path[0] if len(path) > 0 else None
             if cmd is None:
                 raise NoSuchCmdError()
             arg = path[1] if len(path) == 2 else None

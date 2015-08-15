@@ -129,7 +129,7 @@ class IcomRadio:
 
     def read_meter(self):
         resp = self.cmd(b'\x15\x02', read_cmd=True)
-        return ((resp[0] & 0xF) * 100) + ((resp[1] >> 4) & 0xF) * 10 + resp[1] & 0xF
+        return ((resp[0] & 0xF) * 100) + ((resp[1] >> 4) & 0xF) * 10 + (resp[1] & 0xF)
 
     def set_mode(self, m):
         m = m.upper()
