@@ -114,10 +114,10 @@ class IcomRadio:
             digits = (freq // (100**n)) % 100
             bcd = (((digits // 10) % 10) << 4) | (digits % 10)
             payload += bytes([bcd])
-        self.cmd([0x05], payload)
+        self.cmd(b'\x05', payload)
 
     def read_freq(self):
-        resp = self.cmd([0x03], is_read_cmd=True)
+        resp = self.cmd(b'\x03', is_read_cmd=True)
         f = 0
         for n in range(5):
             f += (((resp[n] >> 4) & 0xF) * 10 + (resp[n] & 0xF)) * 100**n
