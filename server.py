@@ -1,8 +1,12 @@
 import http.server
 import json
-from icomradio import IcomRadio
+import icomradio
 
-radio = IcomRadio(0x58, '/dev/ttyO2')
+class NoSuchCmdError(Exception):
+    pass
+
+radio = icomradio.IcomRadio(b'\x58', '/dev/ttyO2')
+state = {}
 
 class RadioRequestHandler(http.server.BaseHTTPRequestHandler):
 
@@ -13,53 +17,62 @@ class RadioRequestHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        path = self.path.split('/')
+        path = self.path.strip('/').split('/')
         print(path)
-        cmd = path[1] if len(path) > 1 else None
         response = None
-        
-        if cmd == None:
-            pass
-        elif cmd == 'read_meter':
-            response = radio.read_meter()
-        elif cmd == 'scan_start':
-            response = radio.scan_start()
-        elif cmd == 'scan_stop':
-            response = radio.scan_stop()
-        elif cmd == 'read_freq':
-            response = radio.read_freq()
-        elif cmd == 'read_mode':
-            response = radio.read_mode()
-        elif len(path) > 2:
-            arg = path[2]
+#        try:
+        if len(path) == 1:
+            cmd = path[0]
+            if cmd == 'read_meter':
+                response = radio.read_meter()
+            elif cmd == 'read_freq':
+                response = radio.read_freq()
+            elif cmd == 'read_mode':
+                response = radio.read_mode()
+            elif cmd == 'read_agc':
+                response = radio.read_agc()
+            elif cmd == 'read_patt':
+                response = radio.read_patt()
+            else:
+                raise NoSuchCmdError()
+        elif len(path) == 2:
+            cmd = path[0]
+            arg = path[1]
             if cmd == 'set_scan':
-                response = radio.set_scan(arg)
+                radio.set_scan(arg)
             elif cmd == 'set_freq':
-                response = radio.set_freq(arg)
+                radio.set_freq(arg)
             elif cmd == 'set_vfo':
-                response = radio.set_vfo(arg)
+                radio.set_vfo(arg)
             elif cmd == 'set_mem':
-                response = radio.set_mem(arg)
+                radio.set_mem(arg)
             elif cmd == 'set_agc':
-                response = radio.set_agc(arg)
+                radio.set_agc(arg)
             elif cmd == 'set_patt':
-                response = radio.set_patt(arg)
+                radio.set_patt(arg)
             elif cmd == 'set_mode':
-                response = radio.set_mode(arg)
-        
-        if response == None:
-            self.send_response(404)
-            response = {'success': False, 'error': 'WrongCommand'}
-        elif not response['success']:
-            self.send_response(500, response.get('error', 'Unknown error'))
+                radio.set_mode(arg)
+            else:
+                raise NoSuchCmdError()
+            response = int(arg) if arg.isdigit() else arg
         else:
-            self.send_response(200)
-        
+            raise NoSuchCmdError()
+        '''
+        except NoSuchCmdError:
+            self.send_response(404, 'No such command')
+        except icomradio.BadInputError as bie:
+            self.send_response(400, str(bie))
+        except Exception as e:
+            self.send_response(500, str(e))
+        else:
+        ''' 
+        self.send_response(200)
        	self.send_header('Content-Type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
-        responseBytes = bytes(json.dumps(response), 'UTF-8')
-       	self.wfile.write(responseBytes)
+        if response != None:
+            responseBytes = bytes(json.dumps({'data' : response}), 'UTF-8')
+       	    self.wfile.write(responseBytes)
 
 if __name__ == "__main__":
     PORT = 8925
