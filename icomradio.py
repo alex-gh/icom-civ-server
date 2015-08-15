@@ -1,38 +1,44 @@
 import serial
 import time
-import binascii
+
 
 class CivError(Exception):
     def __init__(self, msg):
         self.msg = msg
+
     def __str__(self):
         return 'CI-V Error: ' + str(self.msg)
+
 
 class ComError(Exception):
     def __init__(self, msg):
         self.msg = msg
+
     def __str__(self):
         return 'Com Error: ' + str(self.msg)
+
 
 class BadInputError(Exception):
     def __init__(self, msg):
         self.msg = msg
+
     def __str__(self):
         return 'Bad input: ' + str(self.msg)
 
+
 class IcomRadio:
     BYTES_FOR_MODE = {
-        'FM':   b'\x05\x01',
-        'USB':  b'\x01\x01',
-        'LSB':  b'\x00\x01',
-        'AM':   b'\x02\x01',
-        'CW':   b'\x03\x01',
-        'CWN':  b'\x03\x02',
+        'FM': b'\x05\x01',
+        'USB': b'\x01\x01',
+        'LSB': b'\x00\x01',
+        'AM': b'\x02\x01',
+        'CW': b'\x03\x01',
+        'CWN': b'\x03\x02',
         'RTTY': b'\x04\x01',
-        'WFM':  b'\x06\x01'
-        }
+        'WFM': b'\x06\x01'
+    }
 
-    MODE_FOR_BYTES = {v: k for k,v in BYTES_FOR_MODE.items()}
+    MODE_FOR_BYTES = {v: k for k, v in BYTES_FOR_MODE.items()}
 
     def __init__(self, radio_addr, serial_port):
         self.radio_addr = radio_addr
@@ -52,7 +58,7 @@ class IcomRadio:
         to_send = b'\xFE\xFE' + self.radio_addr + self.comp_addr + cmd_bytes + payload + b'\xFD'
 
         receiving = False
-        response = b'' 
+        response = b''
         last_n_recvd = b'\x00' * len(validate)
 
         self.flush()
@@ -97,15 +103,15 @@ class IcomRadio:
             return 'Fast'
         elif resp == b'\x02':
             return 'Slow'
-        raise CivException('Unexpected response to AGC read: ' + str(resp))
+        raise CivError('Unexpected response to AGC read: ' + str(resp))
 
     def set_freq(self, freq):
         if not freq.isdigit() or len(freq) > 10:
             raise BadInputError('bad freq')
         freq = freq.zfill(10)
         payload = []
-        for x in range(0,5):
-            payload.insert(0, int(freq[2*x:2*x+2], 16))
+        for x in range(0, 5):
+            payload.insert(0, int(freq[2 * x:2 * x + 2], 16))
         self.cmd([0x05], payload)
 
     def read_freq(self):
@@ -114,21 +120,20 @@ class IcomRadio:
         f += resp[2:4] + resp[0:2]
         return int(f.lstrip('0'))
 
-    def set_mem(self, memnum):
-        if not memnum.isdigit() or len(memnum) > 2:
-            raise BadInputError('bad mem')
-        memnum = memnum.zfill(2)
-        bcd = int(memnum[0]) << 4 | int(memnum[1])
-        self.cmd([0x08])
-        self.cmd([0x08], [bcd])
+    def set_mem(self, mem_ch):
+        if mem_ch < 2 or mem_ch > 99:
+            raise BadInputError('Mem ch out of range: ' + str(mem_ch))
+        bcd = (mem_ch // 10) % 10 << 4 | mem_ch % 10
+        self.cmd(b'\x08')
+        self.cmd(b'\x08', bytes([bcd]))
 
     def read_meter(self):
         resp = self.cmd(b'\x15\x02', read_cmd=True)
-        return (resp[0] << 8) | resp[1] 
+        return ((resp[0] & 0xF) * 100) + ((resp[1] >> 4) & 0xF) * 10 + resp[1] & 0xF
 
     def set_mode(self, m):
         m = m.upper()
-        if m not in IcomRadio.BYTES_FOR_MODE:
+        if m not in self.BYTES_FOR_MODE:
             raise BadInputError('No such mode')
         self.cmd(b'\x06', self.BYTES_FOR_MODE[m])
 
@@ -138,37 +143,30 @@ class IcomRadio:
 
     def set_patt(self, patt):
         if patt == 'Pre':
-            self.cmd([0x16, 0x02],  [0x01])
-        elif patt =='Att':
-            self.cmd([0x11], [0x20])
+            self.cmd(b'\x16\x02', b'\x01')
+        elif patt == 'Att':
+            self.cmd(b'\x11', b'\x20')
         elif patt == 'Off':
-            self.cmd([0x16, 0x02], [0x00])
-            self.cmd([0x11], [0x00])
+            self.cmd(b'\x16\x02', b'\x00')
+            self.cmd(b'\x11', b'\x00')
         else:
-            raise BadInputError('PAtt must be "Pre" "Att" or "Off"')
+            raise BadInputError('PAtt must be "Pre", "Att" or "Off"')
 
     def read_patt(self):
-        if self.cmd([0x16, 0x02], read_cmd=True) == '01':
+        if self.cmd(b'\x16\x02', read_cmd=True) == b'\x01':
             return 'Pre'
-        if self.cmd([0x11], read_cmd=True) == '20':
+        if self.cmd(b'\x11', read_cmd=True) == b'\x20':
             return 'Att'
         return 'Off'
 
     def set_scan(self, scan):
-        if scan == 'True':
-            b = b'\x01'
-        elif scan == 'False':
-            b = b'\x00'
-        else:
-            raise BadInputError('Scan must be "True" or "False"')
-        self.cmd(b'\x0E', b)
+        self.cmd(b'\x0E', b'\x01' if scan else b'\x00')
 
     def set_vfo(self, vfo):
         if vfo == 'Mem':
-            self.cmd([0x08])
+            self.cmd(b'\x08')
         else:
-            vfo_bytes = { 'A' : 0x00, 'B' : 0x01 }
+            vfo_bytes = {'A': b'\x00', 'B': b'\x01'}
             if vfo not in vfo_bytes.keys():
-                raise BadInputError('VFO must be "A" or "B"')
-            self.cmd([0x07], [vfo_bytes[vfo]])
-
+                raise BadInputError('VFO must be "A", "B" or "Mem"')
+            self.cmd(b'\x07', vfo_bytes[vfo])
