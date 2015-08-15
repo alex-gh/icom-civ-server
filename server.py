@@ -22,7 +22,12 @@ def run_cmd(cmd, arg=None):
             raise NoSuchCmdError()
     else:
         if cmd == 'set_scan':
-            arg = arg == 'True'
+            if arg == 'True':
+                arg = True
+            elif arg == 'False':
+                arg = False
+            else:
+                raise icomradio.BadInputError('Scan must be "True" or "False')
             radio.set_scan(arg)
         elif cmd == 'set_freq':
             arg = int(arg)
