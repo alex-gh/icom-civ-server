@@ -1,194 +1,176 @@
 import serial
 import time
-import binascii
+
+
+class CivError(Exception):
+    def __init__(self, msg):
+        self.msg = msg
+
+    def __str__(self):
+        return 'CI-V Error: ' + str(self.msg)
+
+
+class ComError(Exception):
+    def __init__(self, msg):
+        self.msg = msg
+
+    def __str__(self):
+        return 'Com Error: ' + str(self.msg)
+
+
+class BadInputError(Exception):
+    def __init__(self, msg):
+        self.msg = msg
+
+    def __str__(self):
+        return 'Bad input: ' + str(self.msg)
+
 
 class IcomRadio:
-    BAD_INPUT = { 'success': False, 'error': 'Bad argument for cmd' }
+    BYTES_FOR_MODE = {
+        'FM': b'\x05\x01',
+        'USB': b'\x01\x01',
+        'LSB': b'\x00\x01',
+        'AM': b'\x02\x01',
+        'CW': b'\x03\x01',
+        'CWN': b'\x03\x02',
+        'RTTY': b'\x04\x01',
+        'WFM': b'\x06\x01'
+    }
 
-    MODE_BYTES = { 'FM':  [0x05, 0x01],
-                'USB':  [0x01, 0x01],
-                'LSB':  [0x00, 0x01],
-                'AM':   [0x02, 0x01],
-                'CW':   [0x03, 0x01],
-                'CWN': [0x03, 0x02],
-                'RTTY': [0x04, 0x01],
-                'WFM':  [0x06, 0x01] }
-   
-    VALID_CMDS = frozenset(['scan_start',
-                            'scan_stop',
-                            'set_mode',
-                            'set_freq',
-                            'set_patt',
-                            'set_agc'])    
-   
+    MODE_FOR_BYTES = {v: k for k, v in BYTES_FOR_MODE.items()}
+
     def __init__(self, radio_addr, serial_port):
         self.radio_addr = radio_addr
-        self.comp_addr = 0xE0
+        self.comp_addr = b'\xE0'
         self.s = serial.Serial(port=serial_port, baudrate=19200,
                                timeout=1, writeTimeout=1)
         print('acquired serial port')
 
     def flush(self):
-        self.s.flushInput()        
+        self.s.flushInput()
 
-    def cmd(self, cmd_bytes, payload=[], respond_with_data=False):
-        validate = [0xFE, 0xFE, self.comp_addr, self.radio_addr]
-        if respond_with_data:
-            validate.extend(cmd_bytes)
+    def cmd(self, cmd_bytes, payload=b'', is_read_cmd=False):
+        validate = b'\xFE\xFE' + self.comp_addr + self.radio_addr
+        if is_read_cmd:
+            validate += cmd_bytes
 
-        to_send = [0xFE, 0xFE, self.radio_addr, self.comp_addr]
-        to_send.extend(cmd_bytes)
-        to_send.extend(payload)
-        to_send.append(0xFD)
+        to_send = b'\xFE\xFE' + self.radio_addr + self.comp_addr + cmd_bytes + payload + b'\xFD'
 
         receiving = False
-        response = bytearray()
-        last_n_recvd = [0] * len(validate)
+        response = b''
+        last_n_recvd = b'\x00' * len(validate)
 
         self.flush()
-        self.s.write(bytearray(to_send))
+        self.s.write(to_send)
 
-        t0 = time.time() 
+        t0 = time.time()
 
         while (time.time() - t0) < 1.0:
             b = self.s.read(1)
-            if len(b) != 1:
-                continue
-            if receiving:
-                if b == b'\xFD':
-                    r = binascii.b2a_hex(response).decode('ascii')
-                    if respond_with_data:
-                        return {'success': True, 'data': r}
-                    else:
-                        if r == 'fb':
-                            return { 'success': True }
-                        else:
-                            return { 'success': False, 'error': 'CI-V error: ' + r }
-                else:
-                    response += b
-            else:
-                last_n_recvd.pop(0)
-                last_n_recvd.append(ord(b))
+            if len(b) == 0:
+                time.sleep(0.005)
+            elif not receiving:
+                last_n_recvd = last_n_recvd[1:] + b
                 if validate == last_n_recvd:
                     receiving = True
+            else:
+                if b != b'\xFD':
+                    response += b
+                else:
+                    if response == b'\xFA':
+                        raise CivError(response)
+                    if is_read_cmd:
+                        return response
+                    if response != b'\xFB':
+                        raise CivError('Unexpected radio response ' + str(response))
+                    return response
+        print('Radio command timed out')
+        raise ComError('Radio is probably off')
 
-        print('timed out')
-        return { 'success': False, 'error': 'Radio off or serial conn down' }
-            
+    def set_agc(self, speed):
+        if speed == 'Fast':
+            b = b'\x01'
+        elif speed == 'Slow':
+            b = b'\x02'
+        else:
+            raise BadInputError('AGC speed must be "Fast" or "Slow"')
+        self.cmd(b'\x16\x12', b)
+
+    def read_agc(self):
+        resp = self.cmd(b'\x16\x12', is_read_cmd=True)
+        if resp == b'\x01':
+            return 'Fast'
+        elif resp == b'\x02':
+            return 'Slow'
+        raise CivError('Unexpected response to AGC read: ' + str(resp))
+
     def set_freq(self, freq):
-        if not freq.isdigit() or len(freq) > 10:
-            return IcomRadio.BAD_INPUT
-        freq = freq.zfill(10)
-        payload = []
-        for x in range(0,5):
-            payload.insert(0, int(freq[2*x:2*x+2], 16))
-        r = self.cmd([0x05], payload)
-        if r['success']:
-            r['data'] = int(freq)
-        return r
-        
-    def set_mem(self, memnum):
-        if not memnum.isdigit() or len(memnum) > 2:
-            return IcomRadio.BAD_INPUT
-        memnum = memnum.zfill(2)
-        bcd = int(memnum[0]) << 4 | int(memnum[1])
-        r = self.cmd([0x08])
-        if r['success']:
-            r = self.cmd([0x08], [bcd])
-            if r['success']:
-                r['data'] = int(memnum, 10)
-        return r
-            
-    def set_vfo(self, vfo):
-        if vfo == 'Mem':
-            r = self.cmd([0x08])
-        else:
-            vfo_bytes = { 'A' : 0x00, 'B' : 0x01 }
-            if vfo not in vfo_bytes.keys():
-                return IcomRadio.BAD_INPUT
-            r = self.cmd([0x07], [vfo_bytes[vfo]])
-        if r['success']:
-            r['data'] = vfo
-        return r
-        
-    def set_scan(self, scan):
-        if scan == 'True':
-            b = [0x01]
-        elif scan == 'False':
-            b = [0x00]
-        else:
-            return IcomRadio.BAD_INPUT
-        r = self.cmd([0x0E], b)
-        if r['success']:
-            r['data'] = scan == 'True'
-        return r
-        
+        freq = round(freq)
+        if freq < 0 or freq > 9999999999:
+            raise BadInputError('Freq out of range')
+        payload = b''
+        for n in range(5):
+            digits = (freq // (100**n)) % 100
+            bcd = (((digits // 10) % 10) << 4) | (digits % 10)
+            payload += bytes([bcd])
+        self.cmd(b'\x05', payload)
+
+    def read_freq(self):
+        resp = self.cmd(b'\x03', is_read_cmd=True)
+        f = 0
+        for n in range(5):
+            f += (((resp[n] >> 4) & 0xF) * 10 + (resp[n] & 0xF)) * 100**n
+        return f
+
+    def set_mem(self, mem_ch):
+        mem_ch = round(mem_ch)
+        if mem_ch < 2 or mem_ch > 99:
+            raise BadInputError('Mem ch out of range: ' + str(mem_ch))
+        bcd = (((mem_ch // 10) % 10) << 4) | (mem_ch % 10)
+        self.cmd(b'\x08')
+        self.cmd(b'\x08', bytes([bcd]))
+
+    def read_meter(self):
+        resp = self.cmd(b'\x15\x02', is_read_cmd=True)
+        return ((resp[0] & 0xF) * 100) + ((resp[1] >> 4) & 0xF) * 10 + (resp[1] & 0xF)
+
     def set_mode(self, m):
         m = m.upper()
-        if m not in IcomRadio.MODE_BYTES:
-            return IcomRadio.BAD_INPUT
-        r = self.cmd([0x06], self.MODE_BYTES[m])
-        if r['success']:
-            r['data'] = m
-        return r
-    
-    def read_freq(self):
-        response = self.cmd([0x03], respond_with_data=True)
-        data = response['data']
-        if len(data) < 10:
-            return response
-        f = data[8:10] + data[6:8] + data[4:6] 
-        f += data[2:4] + data[0:2]
-        return { 'success': True, 'data': int(f)}
-    
+        if m not in self.BYTES_FOR_MODE:
+            raise BadInputError('No such mode')
+        self.cmd(b'\x06', self.BYTES_FOR_MODE[m])
+
     def read_mode(self):
-        mode_decode = { '0001' : 'LSB',
-                        '0101' : 'USB',
-                        '0201' : 'AM',
-                        '0301' : 'CW',
-                        '0302' : 'CWN',
-                        '0401' : 'RTTY',
-                        '0501' : 'FM',
-                        '0601' : 'WFM' }
+        resp = self.cmd(b'\x04', is_read_cmd=True)
+        return self.MODE_FOR_BYTES[resp]
 
-        r = self.cmd([0x04], respond_with_data=True)
-        if r['success'] and (r['data'] in mode_decode.keys()):
-            r['data'] = mode_decode[r['data']]
-        return r
-    
-    def read_att(self):
-        return self.cmd([0x11], respond_with_data=True)
-        
-    def read_meter(self):
-        r = self.cmd([0x15, 0x02], respond_with_data=True)
-        if r['success']:
-            r['data'] = int(r['data'])
-        return r
-    
-    def set_patt(self, a):
-        if a == 'Pre':
-            r = self.cmd([0x16, 0x02],  [0x01])
-        elif a =='Att':
-            r = self.cmd([0x11], [0x20])
-        elif a == 'Off':
-            r1 = self.cmd([0x16, 0x02], [0x00])
-            r2 = self.cmd([0x11], [0x00])
-            r = { 'success': r1['success'] and r2['success'] }
+    def set_patt(self, patt):
+        if patt == 'Pre':
+            self.cmd(b'\x16\x02', b'\x01')
+        elif patt == 'Att':
+            self.cmd(b'\x11', b'\x20')
+        elif patt == 'Off':
+            self.cmd(b'\x16\x02', b'\x00')
+            self.cmd(b'\x11', b'\x00')
         else:
-            return IcomRadio.BAD_INPUT
-        if r['success']:
-            r['data'] = a
-        return r
-        
-    def set_agc(self, a):
-        if a == 'Fast':
-            n = 0x01
-        elif a == 'Slow':
-            n = 0x02
-        else:
-            return IcomRadio.BAD_INPUT
-        r = self.cmd([0x16, 0x12], [n])
-        if (r['success']):
-            r['data'] = a
-        return r
+            raise BadInputError('PAtt must be "Pre", "Att" or "Off"')
 
+    def read_patt(self):
+        if self.cmd(b'\x16\x02', is_read_cmd=True) == b'\x01':
+            return 'Pre'
+        if self.cmd(b'\x11', is_read_cmd=True) == b'\x20':
+            return 'Att'
+        return 'Off'
+
+    def set_scan(self, scan):
+        self.cmd(b'\x0E', b'\x01' if scan else b'\x00')
+
+    def set_vfo(self, vfo):
+        if vfo == 'Mem':
+            self.cmd(b'\x08')
+        else:
+            vfo_bytes = {'A': b'\x00', 'B': b'\x01'}
+            if vfo not in vfo_bytes.keys():
+                raise BadInputError('VFO must be "A", "B" or "Mem"')
+            self.cmd(b'\x07', vfo_bytes[vfo])
