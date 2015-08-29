@@ -43,12 +43,9 @@ class IcomRadio:
     def __init__(self, radio_addr, serial_port):
         self.radio_addr = radio_addr
         self.comp_addr = b'\xE0'
-        self.s = serial.Serial(port=serial_port, baudrate=19200,
-                               timeout=1, writeTimeout=1)
+        self.serial_port = serial.Serial(port=serial_port, baudrate=19200,
+                                         timeout=1, writeTimeout=1)
         print('acquired serial port')
-
-    def flush(self):
-        self.s.flushInput()
 
     def cmd(self, cmd_bytes, payload=b'', is_read_cmd=False):
         validate = b'\xFE\xFE' + self.comp_addr + self.radio_addr
@@ -61,13 +58,13 @@ class IcomRadio:
         response = b''
         last_n_recvd = b'\x00' * len(validate)
 
-        self.flush()
-        self.s.write(to_send)
+        self.serial_port.flushInput()
+        self.serial_port.write(to_send)
 
         t0 = time.time()
 
         while (time.time() - t0) < 1.0:
-            b = self.s.read(1)
+            b = self.serial_port.read(1)
             if len(b) == 0:
                 time.sleep(0.005)
             elif not receiving:
@@ -128,7 +125,6 @@ class IcomRadio:
         if mem_ch < 2 or mem_ch > 99:
             raise BadInputError('Mem ch out of range: ' + str(mem_ch))
         bcd = (((mem_ch // 10) % 10) << 4) | (mem_ch % 10)
-        self.cmd(b'\x08')
         self.cmd(b'\x08', bytes([bcd]))
 
     def read_meter(self):
